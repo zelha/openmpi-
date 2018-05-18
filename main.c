@@ -30,6 +30,12 @@ int multiplyvectors(int *v,int *b,int size){
 }
 
 
+int mod(int a, int b)
+{
+    int r = a % b;
+    return r < 0 ? r + b : r;
+}
+
 struct matrice * allocateMatrice(int size){
 
     struct matrice *mat = malloc(sizeof(struct matrice));
@@ -154,7 +160,7 @@ struct matrice *scatter(struct matrice *A, struct tablo *vecteur, int currentran
 
         }
 
-        //
+
         int next = (currentrank+1)*(vecteur->size / world_size);
         for (int i = next; i <end ; i++) {
             MPI_Send(A->tab[i], A->size, MPI_INT, (currentrank + 1) % world_size, 0, MPI_COMM_WORLD);
@@ -195,33 +201,46 @@ struct tablo *computes(struct tablo *vecteur,int  currentrank, int world_size, s
 
 struct tablo *gather(struct tablo *computed, int currentrank, int world_size ){
 
-    if(currentrank == 0) {
+    if(currentrank == LEADER) {
 
         //on gere le dernier tout seul.
-        MPI_Recv(computed->tab+((currentrank-1)%world_size )*(computed->size / world_size),
+
+  /*      MPI_Recv(computed->tab+(mod(currentrank-1,world_size )*(computed->size / world_size)),
                  (computed->size/world_size + computed->size % world_size),
-                 MPI_INT, (currentrank - 1 + world_size) % world_size,
+                 MPI_INT, mod( currentrank - 1 + world_size, world_size),
                  0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-//TODO
-        //printf("%d",((currentrank-1)%world_size )*(computed->size / world_size));
-        printf("received %d  in index %d \n ", computed->tab[((currentrank-1)%world_size )*(computed->size / world_size)]
-        ,((currentrank-1)%world_size )*(computed->size / world_size)
+//TODO clean code
+
+
+        printf("received %d  in index %d \n ",
+               computed->tab[( mod(currentrank-1, world_size ))*(computed->size / world_size)]
+               ,(mod(currentrank-1, world_size ))*(computed->size / world_size)
         );
+*/
+
+        for (int i = 1 ; i < world_size ; i++) {
+
+       //     printf(" %d %d  \n ",(currentrank-i),world_size );
+
+         int index_in_result = mod(currentrank-i,world_size )*(computed->size / world_size);
+         int size_of_data = (i==1) ?
+                            computed->size/world_size +  computed->size%world_size
+                            : computed->size/world_size;
 
 
-        for (int i = 2 ; i < world_size ; ++i) {
+   printf("size : %d, index %d  \n", size_of_data, index_in_result);
 
-            MPI_Recv(computed->tab+((currentrank-i)%world_size )*(computed->size / world_size),
-                     (computed->size/world_size),
-                     MPI_INT, (currentrank - 1 + world_size) % world_size,
+            MPI_Recv(computed->tab+index_in_result,
+                     size_of_data,
+                     MPI_INT, mod(currentrank - 1 + world_size, world_size), //precedent
                      0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-            printf("received %d in index %d \n ", computed->tab[((currentrank-i)%world_size )*(computed->size / world_size)],
-                   ((currentrank-i)%world_size )*(computed->size / world_size)
+            printf("received %d in index %d \n ", computed->tab[index_in_result],
+                   index_in_result
             );
         }
 
-    } else if (currentrank == world_size - 1 ){
+/*    } else if (currentrank == world_size - 1 ){
         MPI_Send(computed->tab+currentrank*(computed->size / world_size),
                  (computed->size/world_size + computed->size % world_size),MPI_INT,(currentrank+1)%world_size,0,MPI_COMM_WORLD
         );
@@ -233,12 +252,22 @@ struct tablo *gather(struct tablo *computed, int currentrank, int world_size ){
 
             MPI_Send(computed->tab+currentrank*(computed->size / world_size), (computed->size/world_size), MPI_INT, (currentrank + 1) % world_size,
                      0, MPI_COMM_WORLD);
-        }
+        }*/
     } else{
+        int size_of_data = (currentrank==world_size-1) ?
+                           computed->size/world_size +  computed->size%world_size
+                                  : computed->size/world_size;
 
-        MPI_Send(computed->tab+currentrank*(computed->size / world_size),
-                 (computed->size/world_size),MPI_INT,(currentrank+1)%world_size,0,MPI_COMM_WORLD
+
+        int index = currentrank*(computed->size / world_size);
+
+
+        MPI_Send(computed->tab+index,
+                 size_of_data,MPI_INT,(currentrank+1)%world_size,0,MPI_COMM_WORLD
         );
+
+
+        printf("\n Size of data %d for rank %d  with index %d +++ current rank +1 %d \n",size_of_data,currentrank,index , (currentrank+1)%world_size);
 
         for (int i = 0; i < ( currentrank -1 + world_size) % world_size; i++) {
 
@@ -295,126 +324,6 @@ int main(int argc, char** argv) {
 
     result=gather(result,world_rank,world_size);
 
-
-/* -------------------------SCATTER---------------------------------------------------------------*/
-
-   /* struct matrice * A;
-    if(world_rank==0) {
-        A   = fillmatrice();
-
-     //   MPI_Send(&(A->size), 1, MPI_INT, (world_rank + 1) % world_size, 0, MPI_COMM_WORLD);
-        for(int i =1*(vecteur->size/world_size); i<vecteur->size ;i++){
-            MPI_Send(A->tab[i], A->size, MPI_INT, (world_rank + 1) % world_size, 0, MPI_COMM_WORLD);
-        }
-    } else{
-        int start= world_rank*(vecteur->size / world_size);
-        int end= vecteur->size;//(world_rank+1)*(vecteur->size / world_size);
-        A = allocateMatrice(vecteur->size);
-
-        for(int i =start;i<end;i++){
-
-            MPI_Recv(A->tab[i],vecteur->size,MPI_INT,world_rank -1, 0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
-            printf("process %d received matrice %d %d  %d %d  from process %d \n", world_rank,
-                   A->tab[i][0],
-                   A->tab[i][1],
-                   A->tab[i][2],
-                   A->tab[i][3]
-                    ,world_rank-1 );
-
-        }
-
-        //
-        int next = (world_rank+1)*(vecteur->size / world_size);
-        for (int i = next; i <end ; i++) {
-            MPI_Send(A->tab[i], A->size, MPI_INT, (world_rank + 1) % world_size, 0, MPI_COMM_WORLD);
-
-
-        }
-    }
-
-
-
-    //DO the MAths
-
-    computed = allocateTablo(vecteur->size);
-
-
-
-    int lastindex =(world_rank+1)*(vecteur->size / world_size);
-    int firstindex = world_rank*(vecteur->size / world_size);
-    //pour gérer le cas N%P != 0
-    if((vecteur->size%world_size != 0)&&(world_rank == world_size -1))lastindex = vecteur->size;
-
-    for(int i = firstindex ;
-            i<lastindex;
-            i++){
-        computed->tab[i] = multiplyvectors(vecteur->tab,A->tab[i],vecteur->size);
-        printf("in processor %d calculated %d\n", world_rank,computed->tab[i]);
-    }*/
-
-
-
-
-
-
-    /* --- gather --*/
-
-//    struct tablo *result = allocateTablo(vecteur->size);
-
-/*
-    if(world_rank == 0) {
-
-        //on gere le dernier tout seul.
-        MPI_Recv(computed->tab+((world_rank-1)%world_size )*(vecteur->size / world_size),
-                 (vecteur->size/world_size + vecteur->size % world_size),
-                 MPI_INT, (world_rank - 1 + world_size) % world_size,
-                 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-//TODO
-
-        printf("received %d \n ", computed->tab[((world_rank-1)%world_size )*(vecteur->size / world_size)]);
-
-
-        for (int i = 2 ; i < world_size ; ++i) {
-
-            MPI_Recv(computed->tab+((world_rank-i)%world_size )*(vecteur->size / world_size),
-                     (vecteur->size/world_size),
-                     MPI_INT, (world_rank - 1 + world_size) % world_size,
-                     0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-            printf("received %d \n ", computed->tab[((world_rank-i)%world_size )*(vecteur->size / world_size)]);
-        }
-
-    } else if (world_rank == world_size - 1 ){
-        MPI_Send(computed->tab+world_rank*(vecteur->size / world_size),
-                 (vecteur->size/world_size + vecteur->size % world_size),MPI_INT,(world_rank+1)%world_size,0,MPI_COMM_WORLD
-        );
-
-        for (int i = 0; i < ( world_rank -1 + world_size) % world_size; i++) {
-
-            MPI_Recv(computed->tab+world_rank*(vecteur->size / world_size), (vecteur->size/world_size), MPI_INT, (world_rank - 1 + world_size) % world_size,
-                     0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-            MPI_Send(computed->tab+world_rank*(vecteur->size / world_size), (vecteur->size/world_size), MPI_INT, (world_rank + 1) % world_size,
-                     0, MPI_COMM_WORLD);
-        }
-    } else{
-
-        MPI_Send(computed->tab+world_rank*(vecteur->size / world_size),
-                 (vecteur->size/world_size),MPI_INT,(world_rank+1)%world_size,0,MPI_COMM_WORLD
-        );
-
-        for (int i = 0; i < ( world_rank -1 + world_size) % world_size; i++) {
-
-            MPI_Recv(computed->tab+world_rank*(vecteur->size / world_size), (vecteur->size/world_size), MPI_INT, (world_rank - 1 + world_size) % world_size,
-                     0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-            MPI_Send(computed->tab+world_rank*(vecteur->size / world_size), (vecteur->size/world_size), MPI_INT, (world_rank + 1) % world_size,
-                     0, MPI_COMM_WORLD);
-        }
-
-    }
-
-*/
 
     if (world_rank == LEADER) {
         printf("final vector");
