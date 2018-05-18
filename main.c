@@ -2,13 +2,14 @@
 #include <mpi.h>
 #include <stdlib.h>
 #include <omp.h>
+#include <memory.h>
 
 #define LEADER 0
 
 /*
  * run with
- * mpicc -fopenmp -Wall main.c -o main.exe
- * mpirun -np 4 a.out mat2_1.txt
+ * mpicc -fopenmp -Wall main.c -o elhaouari.exe
+ * mpirun -np 4  elhaouari.exe matrice vecteur
  */
 struct tablo {
     int * tab;
@@ -55,47 +56,108 @@ struct tablo * allocateTablo(int size) {
     //printArray(tmp);
     return tmp;
 }
-struct tablo *filltablo(int size){
-    struct tablo *t = allocateTablo(4);
-    t->tab[0]=-10;
-    t->tab[1]=46;
-    t->tab[2]=-25;
-    t->tab[3]=-23;
+
+
+int getSizeN(char *fileName) {
+
+   FILE * fichier =NULL;
+    fichier = fopen(fileName, "r+");
+
+    if(fichier == NULL){
+        printf("Error couldn't read file null ");
+        MPI_Finalize();
+    }
+    int token = 0;
+    int size = 0;
+    while(1){
+        int ret = fscanf(fichier,"%d",&token);
+        if(ret==1) {
+            size++;
+        } else if(ret == EOF)
+            break;
+    }
+    return  size;
+}
+
+
+
+struct tablo *getVector(char *fileName, int size){
+    FILE * fichier =NULL;
+    fichier = fopen(fileName, "r+");
+
+    if(fichier == NULL){
+        printf("Error couldn't read file null ");
+        MPI_Finalize();
+    }
+
+    struct tablo *v = allocateTablo(size);
+    int token = 0;
+    int i = 0;
+    while(1){
+        int ret = fscanf(fichier,"%d",&token);
+        if(ret==1) {
+            v->tab[i]= token;
+            i++;
+        } else if(ret == EOF)
+            break;
+    }
+
+    return v;
+
+}
+
+struct matrice *getMatrice(char *fileName, int n){
+
+    struct matrice *matrix = allocateMatrice(n);
+
+
+    FILE * fichier =NULL;
+    fichier = fopen(fileName, "r+");
+
+    if(fichier == NULL){
+        printf("Error couldn't read file null ");
+        MPI_Finalize();
+    }
+
+    int token = 0;
+    int i = 0;
+    while(1){
+        int ret = fscanf(fichier,"%d",&token);
+        if(ret==1) {
+            matrix->tab[i/n][i%n]= token;
+            i++;
+        } else if(ret == EOF)
+            break;
+    }
+
+    return matrix;
+
+}
+
+
+
+struct tablo *filltablo(char *filename){
+    int n = getSizeN(filename);
+
+    struct tablo *t = getVector(filename,n);
     return t;
 }
 
 
-struct matrice *fillmatrice(){
-    struct matrice *m = allocateMatrice(4);
-    m->tab[0][0]=-10;
-    m->tab[0][1]=46;
-    m->tab[0][2]=-25;
-    m->tab[0][3]=-23;
+struct matrice *fillmatrice(char *filename, int size){
 
-    m->tab[1][0]=-17;
-    m->tab[1][1]=33;
-    m->tab[1][2]=1;
-    m->tab[1][3]=-9;
-
-    m->tab[2][0]=47;
-    m->tab[2][1]=0;
-    m->tab[2][2]=33;
-    m->tab[2][3]=-23;
-
-    m->tab[3][0]=-20;
-    m->tab[3][1]=30;
-    m->tab[3][2]=-32;
-    m->tab[3][3]=-18;
+    struct matrice *m = getMatrice(filename,size );
     return m;
 }
 
 
 
-struct tablo *broadcast(int currentrank,int world_size, struct tablo *vecteur){
+struct tablo *broadcast(int currentrank,int world_size,struct tablo *vecteur, char *vecteurfile){
 
 
     if(currentrank==LEADER){
-        vecteur = filltablo(4); //changer ça
+
+        vecteur = filltablo(vecteurfile);
 
         MPI_Send(&(vecteur->size),1,MPI_INT,
                  (currentrank+1)%world_size, //send to next
@@ -135,9 +197,9 @@ struct tablo *broadcast(int currentrank,int world_size, struct tablo *vecteur){
 }
 
 
-struct matrice *scatter(struct matrice *A, struct tablo *vecteur, int currentrank, int world_size){
+struct matrice *scatter(struct matrice *A, struct tablo *vecteur, int currentrank, int world_size, char *matricefilename){
     if(currentrank==LEADER) {
-        A   = fillmatrice();
+        A   = fillmatrice(matricefilename, vecteur->size);
 
         //   MPI_Send(&(A->size), 1, MPI_INT, (world_rank + 1) % world_size, 0, MPI_COMM_WORLD);
         for(int i =1*(vecteur->size/world_size); i<vecteur->size ;i++){
@@ -203,24 +265,7 @@ struct tablo *gather(struct tablo *computed, int currentrank, int world_size ){
 
     if(currentrank == LEADER) {
 
-        //on gere le dernier tout seul.
-
-  /*      MPI_Recv(computed->tab+(mod(currentrank-1,world_size )*(computed->size / world_size)),
-                 (computed->size/world_size + computed->size % world_size),
-                 MPI_INT, mod( currentrank - 1 + world_size, world_size),
-                 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-//TODO clean code
-
-
-        printf("received %d  in index %d \n ",
-               computed->tab[( mod(currentrank-1, world_size ))*(computed->size / world_size)]
-               ,(mod(currentrank-1, world_size ))*(computed->size / world_size)
-        );
-*/
-
         for (int i = 1 ; i < world_size ; i++) {
-
-       //     printf(" %d %d  \n ",(currentrank-i),world_size );
 
          int index_in_result = mod(currentrank-i,world_size )*(computed->size / world_size);
          int size_of_data = (i==1) ?
@@ -240,19 +285,7 @@ struct tablo *gather(struct tablo *computed, int currentrank, int world_size ){
             );
         }
 
-/*    } else if (currentrank == world_size - 1 ){
-        MPI_Send(computed->tab+currentrank*(computed->size / world_size),
-                 (computed->size/world_size + computed->size % world_size),MPI_INT,(currentrank+1)%world_size,0,MPI_COMM_WORLD
-        );
 
-        for (int i = 0; i < ( currentrank -1 + world_size) % world_size; i++) {
-
-            MPI_Recv(computed->tab+currentrank*(computed->size / world_size), (computed->size/world_size), MPI_INT, (currentrank - 1 + world_size) % world_size,
-                     0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-            MPI_Send(computed->tab+currentrank*(computed->size / world_size), (computed->size/world_size), MPI_INT, (currentrank + 1) % world_size,
-                     0, MPI_COMM_WORLD);
-        }*/
     } else{
         int size_of_data = (currentrank==world_size-1) ?
                            computed->size/world_size +  computed->size%world_size
@@ -286,7 +319,6 @@ struct tablo *gather(struct tablo *computed, int currentrank, int world_size ){
 
 
 
-
 int main(int argc, char** argv) {
 
     //Init mpi environment
@@ -301,19 +333,19 @@ int main(int argc, char** argv) {
 
 
     //info transmise
-    int token;
 
-    struct tablo *vecteur;
 
-    struct tablo *computed;
 
-    vecteur = broadcast(world_rank,world_size,vecteur);
+    struct tablo *vecteur =NULL;
+
+
+    vecteur = broadcast(world_rank,world_size,vecteur,argv[2]);
 
     printf("vecteur %d %d %d %d ", vecteur->tab[0],vecteur->tab[1],vecteur->tab[2],vecteur->tab[3]);
 
-    struct matrice * A;
+    struct matrice * A =NULL;
 
-    A = scatter(A,vecteur,world_rank,world_size);
+    A = scatter(A,vecteur,world_rank,world_size,argv[1]);
 
 
     printf("vecteur %d %d %d %d \n", A->tab[3][0],A->tab[3][1],A->tab[3][2],A->tab[3][3]);
@@ -326,7 +358,6 @@ int main(int argc, char** argv) {
 
 
     if (world_rank == LEADER) {
-        printf("final vector");
         for (int i = 0; i < result->size; i++) {
             printf("%d\n", result->tab[i]);
         }
